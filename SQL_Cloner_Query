@@ -1,0 +1,158 @@
+--THIS QUERY IS ONLY EQUIPPED TO HANDLE: 
+--SIMPLE NUMERICS SUCH AS FLOATS, INTS, ETC
+--SIMPLE STRING DATA TYPES LIMITED TO: VARCHARS, CHARS, NCHARS AND NVARCHARS
+--DATES AND DATETIMES
+
+--------------Only Change From this Line to the next line. Everything Below is configurable through this block ------------
+
+--Declare These as Filters
+----Declare the Table Name
+Declare @stringTableName as VarChar(max) = ''
+
+----Declare the Table you will be inserting the Values into (iif different than above)
+Declare @stringNewTableName as VarChar(max) = ''
+
+----These Variables will alter the results with a Replace Function. 
+---Leave these blank if you won't be replacing anything
+Declare @VarCharFind as VarChar(max) = ''
+Declare @VarCharReplace as VarChar(max) = ''
+
+----Your Where clause. Leave blank if there is no filter. Otherwise include “where”.
+Declare @OptionalParam As VarChar(Max) = ''
+
+
+------------------Everything Below Works on it's own. Only Change what is above this line-------------------------
+
+
+Declare @index as int = 1
+Declare @rowcount As Int = 0
+Declare @execFunction As VarChar(max) = ''
+Declare @InsertTableRowName As VarChar(max) = ''
+Declare @InsertTableType as VarChar(3) = ''
+Declare @TempFilterType As VarChar(Max) = ''
+
+
+
+--Create RowCount of Table
+Select @ROWCOUNT = Count(*)
+
+From	(
+		Select	Column_Name 
+		From	INFORMATION_SCHEMA.COLUMNS
+		Where	Table_Name = '' + @stringTableName + ''
+		) As TheCount
+
+--Use While Loop to create Table Columns
+While @index <= @rowcount
+Begin
+
+--Determines the Variable type to change the exec function accordingly
+	Select	@TempFilterType = TypeTable.DATA_TYPE
+
+	From	(
+			Select	Data_Type,
+					ROW_NUMBER() OVER (Order By Ordinal_Position) as RowNum
+			From	INFORMATION_SCHEMA.COLUMNS
+			Where	Table_Name = @stringTableName
+			
+			) As TypeTable
+	Where TypeTable.RowNum = @index
+
+--Prepares @InsertTableRowName With the first part of the string
+	Set @InsertTableRowName = Case 
+		When	@TempFilterType IN('varchar', 'nvarchar','char', 'nchar')
+			Then	@InsertTableRowName + ''''''''' + ' 
+		When	@TempFilterType IN('datetime', 'date')
+			Then	@InsertTableRowName + ''''''''' + Convert(varchar(Max), '
+		Else
+					@InsertTableRowName + 'Convert(varchar(Max), '
+	End
+
+--Determines the Name of the Column
+	Select	@InsertTableRowName = @InsertTableRowName  + 
+	Case
+	When @TempFilterType IN('varchar', 'nvarchar','char', 'nchar')
+		Then 'ISNULL(' + 'Replace(' + Column_Name + ','''''''','''''''''''')' + ','''')'
+	When	@TempFilterType IN('datetime', 'date')
+		Then 'ISNULL(' + 'Replace(' + Column_Name + ','''''''','''''''''''')' + ',''12/31/9999'')'
+	Else
+		'ISNULL(' + 'Replace(' + Column_Name + ','''''''','''''''''''')' + ',0)'
+	End
+	
+
+	From	(
+			Select	Column_Name, 
+					ROW_NUMBER() OVER (Order By Ordinal_Position) As RowNum 
+			From INFORMATION_SCHEMA.COLUMNS
+			Where Table_Name = @stringTableName
+			) As TheRow
+	Where RowNum = @index
+
+
+--Finishes Closes each column insert (in every instance)
+	Set @InsertTableRowName = Case 
+
+		When	@TempFilterType IN('varchar', 'nvarchar','char', 'nchar')
+			Then	@InsertTableRowName + ' + '''''''''
+		When	@TempFilterType IN('datetime', 'date')
+			Then	@InsertTableRowName + ') + ''''''''' 
+		Else
+					@InsertTableRowName + ') '
+		
+	End
+
+
+--Links each Row together with commas and plus signs until the very end.
+	If @index < @rowcount 
+	Begin 
+
+		Set		@InsertTableRowName = Case 
+			When	@TempFilterType IN('varchar', 'nvarchar','char', 'nchar')
+				Then	@InsertTableRowName + ' + ' + ''',''' + ' + '
+			When	@TempFilterType IN('datetime', 'date')
+				Then	@InsertTableRowName + ' + '','' + '
+			Else
+						@InsertTableRowName + ' + '','' + '
+		End
+
+	End
+
+	Set @index = @index + 1
+End
+
+--Puts the Query together (without any of the Parameters yet). 
+--First, determine if a new table should be used instead.
+If @stringNewTableName = ''
+Begin
+Set @stringNewTableName = @stringTableName
+End
+
+--Next, Build the Query, and do it accordingly with if there is a Find/Replace asked for.
+Set @execFunction = 'Select '
+If @VarCharFind <> ''
+Begin
+Set @execFunction = @execFunction + 'Replace('
+End
+Set @execFunction = @execFunction + '''insert into ' + @stringNewTableName + ' Values('' + ' + @InsertTableRowName + ' + '')'' '
+If @VarCharFind <> ''
+Begin
+Set @execFunction = @execFunction + ', ''' + @VarCharFind + ''', ''' + @VarCharReplace + ''') '
+End
+Set @execFunction = @execFunction + 'From ' + @stringTableName
+
+
+
+
+--Adds in the optional Parameters
+If		@OptionalParam <> ''
+Begin
+Set @execFunction = @execFunction + ' ' + @OptionalParam
+End
+Set @execFunction = @execFunction + CHAR(13)+CHAR(10)
+
+--Executes the function and pulls an entire set of queries to copy into the new Database
+
+Print @execFunction
+Exec(@execFunction)
+
+
